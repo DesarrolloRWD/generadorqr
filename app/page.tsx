@@ -617,7 +617,7 @@ export default function QRBarcodeGenerator() {
                   <Label htmlFor="codigo" className="font-bold">Código</Label>
                   <Input
                     id="codigo"
-                    placeholder="Código o ID del paciente"
+                    placeholder="Código"
                     value={productData.codigo}
                     onChange={(e) => handleInputChange("codigo", e.target.value)}
                   />
