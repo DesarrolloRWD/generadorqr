@@ -614,7 +614,7 @@ export default function QRBarcodeGenerator() {
                   </select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="codigo" className="font-bold">Código/ID Paciente</Label>
+                  <Label htmlFor="codigo" className="font-bold">Código</Label>
                   <Input
                     id="codigo"
                     placeholder="Código o ID del paciente"
