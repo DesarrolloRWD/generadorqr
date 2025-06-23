@@ -11,7 +11,10 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { QRCodeSVG } from 'qrcode.react'
 import ReactDOMServer from 'react-dom/server'
 import JsBarcode from 'jsbarcode'
-import { Download, RotateCcw, Printer } from "lucide-react"
+import { Download, RotateCcw, Printer, Database, Save, List } from "lucide-react"
+import { DataImporter } from "@/components/DataImporter"
+import { DatabaseService, flatToNestedProduct, groupProductsByCode, ProductDataFlat } from "@/lib/db-service"
+import Link from "next/link"
 // printJS se importará dinámicamente solo en el cliente
 
 interface LoteData {
@@ -26,6 +29,8 @@ interface ProductData {
   unidad: string
   lotes: LoteData[]
   empresa: string
+  area: string
+  presentacion: string
 }
 
 interface LabelConfig {
@@ -55,13 +60,38 @@ const empresaLogoMap: Record<string, string> = {
 };
 
 export default function QRBarcodeGenerator() {
+  // Función para manejar la importación de datos a la base de datos y a la API
+  const handleDataImport = async (data: ProductDataFlat[]) => {
+    try {
+      // Asegurar que todos los registros tengan los campos area y presentacion
+      const dataCompleta = data.map(item => ({
+        ...item,
+        area: item.area || "",
+        presentacion: item.presentacion || ""
+      }));
+      
+      // Convertir datos planos a estructura anidada
+      const products = groupProductsByCode(dataCompleta);
+      
+      // Guardar en la base de datos local y en la API
+      const dbService = DatabaseService.getInstance();
+      await dbService.saveProducts(products);
+      
+      return Promise.resolve();
+    } catch (error) {
+      console.error('Error al importar datos:', error);
+      return Promise.reject(error);
+    }
+  };
   const [productData, setProductData] = useState<ProductData>({
     codigo: "",
     marca: "",
     descripcion: "",
     unidad: "",
     lotes: [{ lote: "", fechaExpiracion: "" }],
-    empresa: "Bioscientia"
+    empresa: "Bioscientia",
+    area: "",
+    presentacion: ""
   })
   
   // Estado para manejar múltiples lotes seleccionados
@@ -128,8 +158,29 @@ export default function QRBarcodeGenerator() {
       descripcion: "",
       unidad: "",
       lotes: [{ lote: "", fechaExpiracion: "" }],
-      empresa: "Bioscientia"
+      empresa: "Bioscientia",
+      area: "",
+      presentacion: ""
     })
+  }
+  
+  // Función para guardar el producto actual en la base de datos y en la API
+  const saveCurrentProduct = async () => {
+    try {
+      if (!productData.codigo) {
+        alert('El código del producto es obligatorio');
+        return;
+      }
+      
+      // Guardar en la base de datos local y en la API
+      const dbService = DatabaseService.getInstance();
+      await dbService.saveProduct(productData);
+      
+      alert('Producto guardado correctamente');
+    } catch (error) {
+      console.error('Error al guardar el producto:', error);
+      alert(`Error al guardar el producto: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
   }
 
   // Estado para el lote actualmente seleccionado (para compatibilidad)
@@ -161,7 +212,9 @@ export default function QRBarcodeGenerator() {
       marca: productData.marca,
       descripcion: productData.descripcion,
       unidad: productData.unidad,
-      lote: currentLote.lote
+      lote: currentLote.lote,
+      area: productData.area,
+      presentacion: productData.presentacion
     }
     
     switch (qrFormat) {
@@ -173,8 +226,10 @@ export default function QRBarcodeGenerator() {
           `marca-${productData.marca}`,
           `descripcion-${productData.descripcion}`,
           `unidad-${productData.unidad}`,
-          `lote-${currentLote.lote}`
-        ].join('\n')
+          `lote-${currentLote.lote}`,
+          productData.area ? `area-${productData.area}` : '',
+          productData.presentacion ? `presentacion-${productData.presentacion}` : ''
+        ].filter(line => line !== '').join('\n')
       case 'spaces':
       default:
         return [
@@ -182,8 +237,10 @@ export default function QRBarcodeGenerator() {
           `marca  ${productData.marca}`,
           `descripcion  ${productData.descripcion}`,
           `unidad  ${productData.unidad}`,
-          `lote  ${currentLote.lote}`
-        ].join('\n')
+          `lote  ${currentLote.lote}`,
+          productData.area ? `area  ${productData.area}` : '',
+          productData.presentacion ? `presentacion  ${productData.presentacion}` : ''
+        ].filter(line => line !== '').join('\n')
     }
   }
 
@@ -305,6 +362,16 @@ export default function QRBarcodeGenerator() {
                 <td><span class="info-label">Unid:</span></td>
                 <td><span class="info-value">${productData.unidad}</span></td>
               </tr>
+              ${productData.area ? `
+              <tr>
+                <td><span class="info-label">Área:</span></td>
+                <td colspan="3"><span class="info-value">${productData.area}</span></td>
+              </tr>` : ''}
+              ${productData.presentacion ? `
+              <tr>
+                <td><span class="info-label">Present:</span></td>
+                <td colspan="3"><span class="info-value">${productData.presentacion}</span></td>
+              </tr>` : ''}
               <tr>
                 <td><span class="info-label">Fecha:</span></td>
                 <td colspan="3"><span class="info-value">${fechaFormateada}</span></td>
@@ -584,11 +651,47 @@ export default function QRBarcodeGenerator() {
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Generador de QR y Códigos de Barras</h1>
           <p className="text-gray-500 font-bold">Genera códigos QR y de barras con información completa del producto</p>
         </div>
-
-        <div className="grid lg:grid-cols-2 gap-8">
+        
+        <Tabs defaultValue="generator" className="mb-8">
+          <TabsList className="grid w-full grid-cols-2 mb-4">
+            <TabsTrigger value="generator" className="font-bold">
+              <span className="flex items-center gap-2">
+                <QRCodeSVG value="example" size={16} />
+                Generador de Códigos
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="database" className="font-bold">
+              <span className="flex items-center gap-2">
+                <Database className="h-4 w-4" />
+                Base de Datos
+              </span>
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="generator">
+            <div className="grid lg:grid-cols-2 gap-8">
           {/* Formulario */}
           <Card>
             <CardHeader>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold">Generador de QR y Código de Barras</h2>
+                <div className="flex space-x-2">
+                  <Link href="/listado">
+                    <Button variant="outline" size="sm">
+                      <List className="h-4 w-4 mr-2" />
+                      Ver Listado
+                    </Button>
+                  </Link>
+                  <Button variant="outline" size="sm" onClick={resetForm}>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Limpiar
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={saveCurrentProduct}>
+                    <Save className="h-4 w-4 mr-2" />
+                    Guardar
+                  </Button>
+                </div>
+              </div>
               <CardTitle className="flex items-center gap-2">
                 <span className="font-bold">Información del Producto</span>
                 <Button variant="outline" size="sm" onClick={resetForm} className="ml-auto">
@@ -805,6 +908,21 @@ export default function QRBarcodeGenerator() {
                               Imprimir Lote Actual
                             </Button>
                           </div>
+                          
+                          <div className="flex flex-wrap gap-2 mt-4">
+                            <Button onClick={() => downloadQR(currentLoteIndex)} className="flex items-center gap-2">
+                              <Download className="h-4 w-4" /> Descargar QR
+                            </Button>
+                            <Button onClick={() => printToZebra(currentLoteIndex)} className="flex items-center gap-2">
+                              <Printer className="h-4 w-4" /> Imprimir
+                            </Button>
+                            <Button onClick={saveCurrentProduct} className="flex items-center gap-2 bg-green-600 hover:bg-green-700">
+                              <Save className="h-4 w-4" /> Guardar
+                            </Button>
+                            <Button variant="outline" onClick={resetForm} className="flex items-center gap-2">
+                              <RotateCcw className="h-4 w-4" /> Limpiar
+                            </Button>
+                          </div>
                         </div>
                         <div className="text-xs text-gray-500 font-bold p-2 bg-gray-50 rounded">
                           <strong>Datos incluidos:</strong>
@@ -842,6 +960,16 @@ export default function QRBarcodeGenerator() {
                             <div>
                               <strong>Lote:</strong> {productData.lotes[currentLoteIndex]?.lote}
                             </div>
+                            {productData.area && (
+                              <div>
+                                <strong>Área:</strong> {productData.area}
+                              </div>
+                            )}
+                            {productData.presentacion && (
+                              <div>
+                                <strong>Presentación:</strong> {productData.presentacion}
+                              </div>
+                            )}
                             <div className="col-span-2">
                               <strong>Descripción:</strong> {productData.descripcion}
                             </div>
@@ -858,7 +986,15 @@ export default function QRBarcodeGenerator() {
               </Tabs>
             </CardContent>
           </Card>
-        </div>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="database">
+            <div className="grid lg:grid-cols-1 gap-8">
+              <DataImporter onDataImported={handleDataImport} />
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )
